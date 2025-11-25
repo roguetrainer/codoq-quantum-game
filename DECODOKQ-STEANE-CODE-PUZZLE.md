@@ -22,10 +22,10 @@ The game board consists of two main areas: the Physical Register and the Stabili
 
 The Steane code is defined by 6 independent stabilizer generators, grouped by the type of error they detect:
 
-* **3 Z-Stabilizers (**$S\_Z$**):** Detect X and Y errors (bit flips). They follow the mathematical structure of a classical Hamming (7,4) code.  
-  * $S\_{Z1} \= Z\_0 Z\_2 Z\_4 Z\_6$ (Example based on a common basis)  
-* **3 X-Stabilizers (**$S\_X$**):** Detect Z and Y errors (phase flips). They mirror the structure of the Z-stabilizers.  
-  * $S\_{X1} \= X\_0 X\_2 X\_4 X\_6$ (Example based on a common basis)
+* **3 Z-Stabilizers (**$S_Z$**):** Detect X and Y errors (bit flips). They follow the mathematical structure of a classical Hamming (7,4) code.  
+  * $S_{Z1} = Z_0 Z_2 Z_4 Z_6$ (Example based on a common basis)  
+* **3 X-Stabilizers (**$S_X$**):** Detect Z and Y errors (phase flips). They mirror the structure of the Z-stabilizers.  
+  * $S_{X1} = X_0 X_2 X_4 X_6$ (Example based on a common basis)
 
 **Syndrome Display:** Each stabilizer has a readout indicating its measurement outcome:
 
@@ -56,10 +56,10 @@ The player can select any of the six stabilizer readouts to "probe" it. This tri
 
 The puzzle relies on the player learning the 6 unique 6-bit syndrome patterns that correspond to the 7 possible locations for each of the 3 error types (21 total correctable syndromes).
 
-* **X-error:** Only flips the Z-stabilizer group ($S\_Z$).  
-* **Z-error:** Only flips the X-stabilizer group ($S\_X$).  
+* **X-error:** Only flips the Z-stabilizer group ($S_Z$).  
+* **Z-error:** Only flips the X-stabilizer group ($S_X$).  
 * **Y-error:** Flips both the Z- and X-stabilizer groups.
 
 ## **5\. Engine Architecture**
 
-The game utilizes a modular Python framework (QEC\_Framework.py) with dedicated classes for QubitRegister and Stabilizer, allowing for easy extension to other QEC codes like the Surface Code.
+The game utilizes a modular Python framework (QEC_Framework.py) with dedicated classes for QubitRegister and Stabilizer, allowing for easy extension to other QEC codes like the Surface Code.
