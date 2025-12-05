@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Gottesman Protocol: 600-Cell Error Correction</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; color: #fff; font-family: 'Courier New', Courier, monospace; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            user-select: none;
+        }
+        h1 { margin: 0; font-size: 24px; text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 0 10px #00ffff; }
+        .hud-panel {
+            background: rgba(0, 10, 30, 0.8);
+            border: 1px solid #00ffff;
+            padding: 15px;
+            margin-top: 10px;
+            border-radius: 4px;
+            pointer-events: auto;
+            max-width: 300px;
+        }
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .stat-label { color: #aaa; }
+        .stat-val { color: #00ffff; font-weight: bold; }
+        
+        button {
+            background: #003344;
+            color: #00ffff;
+            border: 1px solid #00ffff;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            width: 100%;
+            margin-top: 5px;
+        }
+        button:hover { background: #005566; box-shadow: 0 0 10px #00ffff; }
+        button:active { background: #00ffff; color: #000; }
+
+        #controls-panel {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            text-align: right;
+            pointer-events: auto;
+        }
+        
+        .slider-container { margin-bottom: 10px; }
+        input[type=range] { width: 200px; accent-color: #00ffff; }
+        label { margin-right: 10px; font-size: 12px; }
+
+        #message-area {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+            display: none;
+        }
+        .big-msg {
+            font-size: 48px;
+            font-weight: bold;
+            color: #ff0055;
+            text-shadow: 0 0 20px #ff0055;
+            background: rgba(0,0,0,0.8);
+            padding: 20px 40px;
+            border: 2px solid #ff0055;
+        }
+
+        #tutorial {
+            font-size: 12px;
+            color: #88ccff;
+            line-height: 1.4;
+            margin-bottom: 10px;
+        }
+    </style>
+    <!-- Import Three.js from CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <h1>Gottesman Protocol</h1>
+        <div class="hud-panel">
+            <div id="tutorial">
+                MISSION: Stabilize the Quantum Memory.<br>
+                1. <b>RED NODES</b> are errors.<br>
+                2. <b>GLOWING LINES</b> are Syndromes (parity checks).<br>
+                3. Click a node to FLIP its state.<br>
+                4. Clear all errors to stabilize the code.
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">System Entropy:</span>
+                <span id="entropy-val" class="stat-val">0%</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Active Errors:</span>
+                <span id="error-val" class="stat-val">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Syndromes Lit:</span>
+                <span id="syndrome-val" class="stat-val">0</span>
+            </div>
+            <hr style="border-color: #333">
+            <button id="btn-inject">Inject Noise (Random Error)</button>
+            <button id="btn-reset">System Reset</button>
+        </div>
+    </div>
+
+    <div id="controls-panel" class="hud-panel">
+        <div style="margin-bottom:10px; color:#00ffff;">4D ROTATION CONTROLS</div>
+        <div class="slider-container">
+            <label>XW Plane</label>
+            <input type="range" min="0" max="6.28" step="0.01" value="0" id="slider-xw">
+        </div>
+        <div class="slider-container">
+            <label>YW Plane</label>
+            <input type="range" min="0" max="6.28" step="0.01" value="0" id="slider-yw">
+        </div>
+        <div class="slider-container">
+            <label>ZW Plane</label>
+            <input type="range" min="0" max="6.28" step="0.01" value="0" id="slider-zw">
+        </div>
+        <div style="font-size:10px; color:#666;">Drag background to rotate 3D view</div>
+    </div>
+
+    <div id="message-area">
+        <div class="big-msg" id="end-msg">CRITICAL DECOHERENCE</div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- GAME CONFIGURATION ---
+        const CONFIG = {
+            projectionDistance: 2.5, // Distance for stereographic projection
+            nodeSize: 0.04,
+            errorColor: 0xff0055,
+            safeColor: 0x0088ff,
+            syndromeColor: 0xffaa00,
+            edgeOpacity: 0.15,
+            syndromeOpacity: 0.6,
+            maxEntropy: 20 // Game over threshold
+        };
+
+        // --- MATH UTILITIES ---
+        const PHI = (1 + Math.sqrt(5)) / 2; // Golden Ratio
+
+        // Matrix rotation in 4D
+        function rotate4D(point, planes) {
+            let x = point.x, y = point.y, z = point.z, w = point.w;
+            
+            // Rotate XW
+            if (planes.xw !== 0) {
+                const c = Math.cos(planes.xw), s = Math.sin(planes.xw);
+                const nx = x * c - w * s;
+                const nw = x * s + w * c;
+                x = nx; w = nw;
+            }
+            // Rotate YW
+            if (planes.yw !== 0) {
+                const c = Math.cos(planes.yw), s = Math.sin(planes.yw);
+                const ny = y * c - w * s;
+                const nw = y * s + w * c;
+                y = ny; w = nw;
+            }
+            // Rotate ZW
+            if (planes.zw !== 0) {
+                const c = Math.cos(planes.zw), s = Math.sin(planes.zw);
+                const nz = z * c - w * s;
+                const nw = z * s + w * c;
+                z = nz; w = nw;
+            }
+            
+            return { x, y, z, w };
+        }
+
+        // Stereographic Projection 4D -> 3D
+        function project4Dto3D(point4D) {
+            // Formula: v3 = v4 / (R - w)
+            // We project from the "North Pole" of the hypersphere
+            const R = CONFIG.projectionDistance; 
+            const factor = 1 / (R - point4D.w);
+            
+            return new THREE.Vector3(
+                point4D.x * factor,
+                point4D.y * factor,
+                point4D.z * factor
+            );
+        }
+
+        // --- 600-CELL GENERATION ---
+        function generate600CellVertices() {
+            const vertices = [];
+            
+            // Helper to add permutations
+            const addPermutations = (coords) => {
+                // This is a simplified permutation generator for specific 600-cell groups
+                // 1. (±1/2, ±1/2, ±1/2, ±1/2) - 16 vertices
+                if(coords.type === 'hypercube') {
+                    for(let i=0; i<16; i++) {
+                        vertices.push({
+                            x: (i & 1 ? 0.5 : -0.5),
+                            y: (i & 2 ? 0.5 : -0.5),
+                            z: (i & 4 ? 0.5 : -0.5),
+                            w: (i & 8 ? 0.5 : -0.5)
+                        });
+                    }
+                }
+                // 2. (±1, 0, 0, 0) and permutations - 8 vertices
+                else if (coords.type === 'cross') {
+                    const bases = [
+                        [1,0,0,0], [0,1,0,0], [0,0,1,0], [0,0,0,1]
+                    ];
+                    bases.forEach(b => {
+                        vertices.push({ x: b[0], y: b[1], z: b[2], w: b[3] });
+                        vertices.push({ x: -b[0], y: -b[1], z: -b[2], w: -b[3] });
+                    });
+                }
+                // 3. Even permutations of (±ϕ/2, ±1/2, ±1/(2ϕ), 0) - 96 vertices
+                // 1/(2ϕ) = (ϕ-1)/2. So values are: 0, ±0.5, ±(PHI-1)/2, ±PHI/2
+                else if (coords.type === 'golden') {
+                    const a = 0.5;
+                    const b = PHI / 2;
+                    const c = (PHI - 1) / 2; // 1 / (2*PHI)
+                    
+                    // Base even permutations of indices (0,1,2,3)
+                    const evenPerms = [
+                        [0,1,2,3], [0,2,3,1], [0,3,1,2],
+                        [1,0,3,2], [1,2,0,3], [1,3,2,0],
+                        [2,0,1,3], [2,1,3,0], [2,3,0,1],
+                        [3,0,2,1], [3,1,0,2], [3,2,1,0] 
+                    ];
+                    
+                    // For each perm, assign values a, b, c, 0 with all sign combos
+                    // Actually, simpler approach:
+                    // The set is even permutations of (±ϕ/2, ±1/2, ±(ϕ-1)/2, 0)
+                    const vals = [b, a, c, 0];
+                    
+                    const cyclicShifts = [
+                        [b, a, c, 0],
+                        [0, b, a, c],
+                        [c, 0, b, a],
+                        [a, c, 0, b]
+                    ];
+
+                    // For 96 points, we take cyclic shifts and flip signs
+                    // Note: This is an approximation of the "Even Permutations" logic
+                    // A proper generator checks parity. For this visualizer, 
+                    // we will generate all 192 sign permutations of cyclic shifts and filter for 600-cell distance constraints later if needed.
+                    // However, to keep it simple and performant, we use the specific 12 cyclic shifts * 8 signs pattern.
+                    
+                    // Correct 96 vertices generation:
+                    // Even permutations of (±phi/2, ±1/2, ±1/2phi, 0)
+                    // Let's iterate all 4! = 24 perms, check evenness, then signs.
+                    const baseV = [b, a, c, 0];
+                    const perms = [
+                         [0,1,2,3], [0,2,3,1], [0,3,1,2], // Even starting with 0
+                         [1,2,0,3], [1,3,2,0], [1,0,3,2], // Even starting with 1
+                         [2,3,0,1], [2,0,1,3], [2,1,3,0], // Even starting with 2
+                         [3,0,2,1], [3,1,0,2], [3,2,1,0]  // Even starting with 3
+                    ];
+
+                    perms.forEach(p => {
+                        // 16 sign combinations (2^4)
+                        for(let i=0; i<16; i++) {
+                             // Optimization: Only even number of minus signs? No, all signs valid for 600-cell
+                             const s0 = (i & 1) ? -1 : 1;
+                             const s1 = (i & 2) ? -1 : 1;
+                             const s2 = (i & 4) ? -1 : 1;
+                             const s3 = (i & 8) ? -1 : 1;
+                             
+                             vertices.push({
+                                 x: baseV[p[0]] * s0,
+                                 y: baseV[p[1]] * s1,
+                                 z: baseV[p[2]] * s2,
+                                 w: baseV[p[3]] * s3
+                             });
+                        }
+                    });
+                }
+            };
+
+            addPermutations({type: 'hypercube'});
+            addPermutations({type: 'cross'});
+            // We only need 96 more. The even perm logic above generates 12 * 16 = 192.
+            // The 600 cell takes even permutations of coordinates. 
+            // Let's rely on a simpler property: unit radius. All vertices are distance 1 from origin.
+            // The 96 points are cyclic permutations of (±phi/2, ±1/2, ±1/2phi, 0).
+            const cyclic = [
+                [PHI/2, 0.5, (PHI-1)/2, 0],
+                [0, PHI/2, 0.5, (PHI-1)/2],
+                [(PHI-1)/2, 0, PHI/2, 0.5],
+                [0.5, (PHI-1)/2, 0, PHI/2]
+            ];
+            
+            // Generate even permutations only?
+            // Actually, the 96 vertices are obtained by taking even permutations of (±τ, ±1, ±τ⁻¹, 0) / 2.
+            // And changing signs (2^4 = 16). 12 even perms * 16 signs = 192. Wait, the 600 cell has 120 total.
+            // Ah, the 96 are: Even permutations of positions... NO.
+            // The 96 vertices are (±ϕ/2, ±1/2, ±(ϕ-1)/2, 0) with Even Permutations of COORDINATES.
+            // There are 12 even permutations of 4 coordinates.
+            // And for each position, we can have any sign combination? No. 
+            // Actually, let's use the distance filter. 
+            // All 600-cell vertices are distance 1 from origin.
+            // We have the first 24 (16 hypercube + 8 cross).
+            // Let's generate candidates for the 96 and filter unique ones.
+            
+            const candidates = [];
+            const b = PHI/2, a = 0.5, c = (PHI-1)/2;
+            const seed = [b, a, c, 0];
+            
+            // Even permutations of indices
+            const perms = [
+                [0,1,2,3], [0,2,3,1], [0,3,1,2],
+                [1,2,0,3], [1,3,2,0], [1,0,3,2],
+                [2,3,0,1], [2,0,1,3], [2,1,3,0],
+                [3,0,2,1], [3,1,0,2], [3,2,1,0]
+            ];
+
+            perms.forEach(p => {
+                for(let i=0; i<16; i++) {
+                    const sx = (i&1)?-1:1;
+                    const sy = (i&2)?-1:1;
+                    const sz = (i&4)?-1:1;
+                    const sw = (i&8)?-1:1;
+                    
+                    const v = {
+                        x: seed[p[0]] * sx,
+                        y: seed[p[1]] * sy,
+                        z: seed[p[2]] * sz,
+                        w: seed[p[3]] * sw
+                    };
+                    candidates.push(v);
+                }
+            });
+
+            // Filter duplicates (simple string set)
+            const seen = new Set();
+            // Add initial 24 to set
+            vertices.forEach(v => seen.add(`${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)},${v.w.toFixed(3)}`));
+            
+            candidates.forEach(v => {
+                const k = `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)},${v.w.toFixed(3)}`;
+                if(!seen.has(k)) {
+                    seen.add(k);
+                    vertices.push(v);
+                }
+            });
+
+            // Should be exactly 120 now
+            return vertices.slice(0, 120);
+        }
+
+        function calculateEdges(vertices) {
+            const edges = [];
+            const edgeLength = 1 / PHI; // 0.618... for unit radius 600-cell
+            const tolerance = 0.01;
+
+            for(let i=0; i<vertices.length; i++) {
+                for(let j=i+1; j<vertices.length; j++) {
+                    const dx = vertices[i].x - vertices[j].x;
+                    const dy = vertices[i].y - vertices[j].y;
+                    const dz = vertices[i].z - vertices[j].z;
+                    const dw = vertices[i].w - vertices[j].w;
+                    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz + dw*dw);
+                    
+                    if(Math.abs(dist - edgeLength) < tolerance) {
+                        edges.push([i, j]);
+                    }
+                }
+            }
+            return edges;
+        }
+
+        // --- MAIN ENGINE ---
+        class GameEngine {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+                this.camera.position.z = 3;
+                
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setClearColor(0x000000, 0); // Transparent for CSS background
+                document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+                
+                this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                
+                this.raycaster = new THREE.Raycaster();
+                this.mouse = new THREE.Vector2();
+                
+                // Game State
+                this.qubits = []; // { id, pos4d, state (0=ok, 1=err), mesh }
+                this.edges = [];
+                this.stabilizers = []; // To implement later for full syndrome calculation
+                this.activeSyndromes = []; // Visual lines for errors
+                
+                this.rotation4D = { xw: 0, yw: 0, zw: 0 };
+                
+                this.initWorld();
+                this.setupInputs();
+                this.animate();
+            }
+
+            initWorld() {
+                // Generate Geometry
+                const verts = generate600CellVertices();
+                const edgeIndices = calculateEdges(verts);
+
+                // Create Qubit Meshes
+                const geometry = new THREE.IcosahedronGeometry(CONFIG.nodeSize, 1);
+                const material = new THREE.MeshBasicMaterial({ color: CONFIG.safeColor });
+
+                verts.forEach((v, i) => {
+                    const mesh = new THREE.Mesh(geometry, material.clone());
+                    this.scene.add(mesh);
+                    this.qubits.push({
+                        id: i,
+                        pos4d: v,
+                        state: 0,
+                        mesh: mesh
+                    });
+                });
+
+                // Create Edges (BufferGeometry for performance)
+                // We will update positions every frame
+                this.edgeGeometry = new THREE.BufferGeometry();
+                // 2 points per edge, 3 coords per point
+                this.edgePositions = new Float32Array(edgeIndices.length * 2 * 3);
+                this.edgeGeometry.setAttribute('position', new THREE.BufferAttribute(this.edgePositions, 3));
+                
+                const edgeMat = new THREE.LineBasicMaterial({ 
+                    color: 0x00ffff, 
+                    transparent: true, 
+                    opacity: CONFIG.edgeOpacity,
+                    depthWrite: false
+                });
+                
+                this.edgeLines = new THREE.LineSegments(this.edgeGeometry, edgeMat);
+                this.scene.add(this.edgeLines);
+                
+                // Store edge indices for updates
+                this.edgeIndices = edgeIndices;
+
+                // Lighting (Ambient mostly, geometry is self-illuminated/basic)
+                const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+                this.scene.add(ambient);
+            }
+
+            updateGeometry() {
+                // 1. Rotate & Project all Vertices
+                this.qubits.forEach(q => {
+                    // 4D Rotation
+                    const r = rotate4D(q.pos4d, this.rotation4D);
+                    // 3D Projection
+                    const p3 = project4Dto3D(r);
+                    
+                    q.mesh.position.copy(p3);
+                    
+                    // Update Color based on state
+                    if(q.state === 1) {
+                        q.mesh.material.color.setHex(CONFIG.errorColor);
+                        // Pulse effect size
+                        const s = 1 + Math.sin(Date.now() * 0.01) * 0.3;
+                        q.mesh.scale.setScalar(s);
+                    } else {
+                        q.mesh.material.color.setHex(CONFIG.safeColor);
+                        q.mesh.scale.setScalar(1);
+                    }
+                });
+
+                // 2. Update Lines
+                const positions = this.edgeLines.geometry.attributes.position.array;
+                let idx = 0;
+                this.edgeIndices.forEach(pair => {
+                    const v1 = this.qubits[pair[0]].mesh.position;
+                    const v2 = this.qubits[pair[1]].mesh.position;
+                    
+                    positions[idx++] = v1.x; positions[idx++] = v1.y; positions[idx++] = v1.z;
+                    positions[idx++] = v2.x; positions[idx++] = v2.y; positions[idx++] = v2.z;
+                });
+                this.edgeLines.geometry.attributes.position.needsUpdate = true;
+                
+                // 3. Draw Syndromes (Naive implementation: Lines to neighbors if error)
+                // In a real Gottesman code, we'd check Tetrahedra parity. 
+                // Visual shortcut: If a node is error, light up its connected edges red.
+                // We'll update a second LineSegments object for syndromes?
+                // For performance, let's just color the main edges? No, line segments can only have one color buffer.
+                // Let's create a separate system for "Hot Edges".
+                
+                if(!this.syndromeLines) {
+                    const mat = new THREE.LineBasicMaterial({ color: CONFIG.syndromeColor, transparent: true, opacity: CONFIG.syndromeOpacity, blending: THREE.AdditiveBlending });
+                    const geo = new THREE.BufferGeometry();
+                    this.syndromeLines = new THREE.LineSegments(geo, mat);
+                    this.scene.add(this.syndromeLines);
+                }
+                
+                const badEdges = [];
+                this.edgeIndices.forEach(pair => {
+                    const q1 = this.qubits[pair[0]];
+                    const q2 = this.qubits[pair[1]];
+                    // If either is an error, light the edge (Simulating stabilizer activity)
+                    if(q1.state === 1 || q2.state === 1) {
+                        badEdges.push(q1.mesh.position.x, q1.mesh.position.y, q1.mesh.position.z);
+                        badEdges.push(q2.mesh.position.x, q2.mesh.position.y, q2.mesh.position.z);
+                    }
+                });
+                
+                this.syndromeLines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(badEdges, 3));
+            }
+
+            injectNoise() {
+                // Flip random qubit
+                const idx = Math.floor(Math.random() * this.qubits.length);
+                this.qubits[idx].state = 1 - this.qubits[idx].state;
+                this.updateStats();
+            }
+            
+            resetGame() {
+                this.qubits.forEach(q => q.state = 0);
+                document.getElementById('end-msg').style.display = 'none'; // hide game over
+                this.updateStats();
+            }
+
+            onClick(event) {
+                // Raycast
+                this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObjects(this.qubits.map(q => q.mesh));
+                
+                if(intersects.length > 0) {
+                    // Find qubit ID
+                    const obj = intersects[0].object;
+                    const q = this.qubits.find(q => q.mesh === obj);
+                    if(q) {
+                        // FIX IT (Flip Back)
+                        // In game logic: Applying X or Z operator flips the state.
+                        q.state = 1 - q.state; 
+                        this.updateStats();
+                    }
+                }
+            }
+
+            updateStats() {
+                const errCount = this.qubits.filter(q => q.state === 1).length;
+                const percent = Math.min(100, (errCount / CONFIG.maxEntropy) * 100);
+                
+                document.getElementById('error-val').innerText = errCount;
+                document.getElementById('entropy-val').innerText = Math.round(percent) + "%";
+                document.getElementById('entropy-val').style.color = percent > 80 ? '#ff0055' : '#00ffff';
+                
+                // Estimate syndromes (edges connected to errors)
+                let sCount = 0;
+                this.edgeIndices.forEach(p => {
+                    if(this.qubits[p[0]].state === 1 || this.qubits[p[1]].state === 1) sCount++;
+                });
+                document.getElementById('syndrome-val').innerText = sCount;
+
+                if(errCount >= CONFIG.maxEntropy) {
+                    document.getElementById('message-area').style.display = 'block';
+                }
+            }
+
+            setupInputs() {
+                // Sliders
+                document.getElementById('slider-xw').addEventListener('input', (e) => this.rotation4D.xw = parseFloat(e.target.value));
+                document.getElementById('slider-yw').addEventListener('input', (e) => this.rotation4D.yw = parseFloat(e.target.value));
+                document.getElementById('slider-zw').addEventListener('input', (e) => this.rotation4D.zw = parseFloat(e.target.value));
+                
+                // Buttons
+                document.getElementById('btn-inject').addEventListener('click', () => this.injectNoise());
+                document.getElementById('btn-reset').addEventListener('click', () => this.resetGame());
+                
+                // Mouse Click
+                window.addEventListener('click', (e) => this.onClick(e));
+                
+                // Resize
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                this.controls.update();
+                this.updateGeometry();
+                
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        // Start Game
+        const game = new GameEngine();
+
+        // Initial Noise
+        setTimeout(() => {
+            game.injectNoise();
+            game.injectNoise();
+            game.injectNoise();
+        }, 1000);
+
+    </script>
+</body>
+</html>
