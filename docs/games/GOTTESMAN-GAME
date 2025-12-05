@@ -1,4 +1,4 @@
-# Gottesman Protocol" game. 
+# Gottesman Protocol game. 
 
 This is a single HTML file containing the `Three.js` 3D engine, the 4D math to generate the 600-cell, and the game logic for the stabilizer code simulation.
 
